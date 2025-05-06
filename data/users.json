@@ -1,0 +1,12 @@
+[
+  {
+    "id": "5a38d62f-1cea-43fa-948f-bdc3ceb044c0",
+    "fullname": "Admin User",
+    "phone": "+998000000000",
+    "telegram": "@admin",
+    "username": "admin",
+    "password": "$2b$10$ie/TIg9di2wF8OVYm.dYjuGBm2ciW2mqAmxxzMAL6jqezRBcbK5Ga",
+    "role": "admin",
+    "createdAt": "2025-05-06T13:40:45.768Z"
+  }
+]
