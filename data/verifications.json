@@ -1,1 +1,35 @@
-[]
+[
+  {
+    "id": "34f626db-99cc-4789-9093-2b462a9e9a2a",
+    "userId": "511526b5-f656-4bdb-a4f8-4d87418d3d0a",
+    "telegram": "MeGaTrOn0530",
+    "name": "aaasssad",
+    "phone": "+998930030530",
+    "code": "743127",
+    "status": "expired",
+    "createdAt": "2025-05-06T17:05:03.986Z",
+    "expiresAt": "2025-05-06T17:35:03.987Z"
+  },
+  {
+    "id": "19511c45-6c39-4dfe-8c68-ebf41918c62c",
+    "userId": "a1258303-70cd-4437-b70e-5109bf76465b",
+    "telegram": "MeGaTrOn0530",
+    "name": "aaasssad",
+    "phone": "+998930030530",
+    "code": "922846",
+    "status": "expired",
+    "createdAt": "2025-05-06T17:05:25.201Z",
+    "expiresAt": "2025-05-06T17:35:25.201Z"
+  },
+  {
+    "id": "043b6a48-cf4c-4475-a63e-906b7dcee32a",
+    "userId": "3e862c70-71cd-4402-a53b-ad599a92e968",
+    "telegram": "MeGaTrOn0530",
+    "name": "aaasssad",
+    "phone": "+998930030530",
+    "code": "478907",
+    "status": "completed",
+    "createdAt": "2025-05-06T17:05:36.917Z",
+    "expiresAt": "2025-05-06T17:35:36.917Z"
+  }
+]

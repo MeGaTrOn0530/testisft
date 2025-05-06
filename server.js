@@ -62,62 +62,96 @@ if (!users.some((user) => user.role === "admin")) {
 // Initialize Telegram bot
 let bot
 if (process.env.TELEGRAM_BOT_TOKEN) {
-  bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true })
-  console.log("Telegram bot initialized")
-
-  // Bot command handlers
-  bot.onText(/\/start/, (msg) => {
-    const chatId = msg.chat.id
-    bot.sendMessage(
-      chatId,
-      "Salom! Testing platformasiga xush kelibsiz. Ro'yxatdan o'tish uchun telegram username ingizni kiriting.",
-    )
-  })
-
-  // Handle verification codes
-  bot.on("message", (msg) => {
-    const chatId = msg.chat.id
-    const verificationPath = path.join(dataDir, "verifications.json")
-    const notificationsPath = path.join(dataDir, "notifications.json")
-
-    try {
-      const verifications = JSON.parse(fs.readFileSync(verificationPath, "utf8"))
-      const pendingVerification = verifications.find(
-        (v) => v.telegram === msg.from.username && v.status === "pending" && new Date(v.expiresAt) > new Date(),
-      )
-
-      if (pendingVerification) {
-        bot.sendMessage(chatId, `Sizning tasdiqlash kodingiz: ${pendingVerification.code}`)
-
-        // Log the notification
-        const notifications = JSON.parse(fs.readFileSync(notificationsPath, "utf8"))
-        notifications.push({
-          id: uuidv4(),
-          userId: pendingVerification.userId,
-          telegram: msg.from.username,
-          message: `Verification code sent: ${pendingVerification.code}`,
-          createdAt: new Date().toISOString(),
-        })
-        fs.writeFileSync(notificationsPath, JSON.stringify(notifications, null, 2))
-      }
-    } catch (err) {
-      console.error("Error handling telegram message:", err)
+  try {
+    // Check if we're in production to use webhooks, otherwise use polling for development
+    if (process.env.NODE_ENV === "production" && process.env.BASE_URL) {
+      // Use webhook in production to avoid polling conflicts
+      bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
+        webHook: {
+          port: process.env.PORT || 3000,
+        },
+      })
+      const webhookUrl = `${process.env.BASE_URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`
+      bot.setWebHook(webhookUrl)
+      console.log("Telegram bot initialized with webhook")
+    } else {
+      // Use polling in development with increased polling interval
+      bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
+        polling: {
+          interval: 2000,
+          params: {
+            timeout: 10,
+          },
+        },
+      })
+      console.log("Telegram bot initialized with polling")
     }
-  })
+
+    // Bot command handlers
+    bot.onText(/\/start/, (msg) => {
+      const chatId = msg.chat.id
+      bot.sendMessage(
+        chatId,
+        "Salom! Testing platformasiga xush kelibsiz. Ro'yxatdan o'tish uchun platformada ma'lumotlaringizni kiriting.",
+      )
+    })
+
+    // Handle verification codes
+    bot.on("message", (msg) => {
+      if (!msg.from || !msg.from.username) return
+
+      const chatId = msg.chat.id
+      const verificationPath = path.join(dataDir, "verifications.json")
+      const notificationsPath = path.join(dataDir, "notifications.json")
+
+      try {
+        const verifications = JSON.parse(fs.readFileSync(verificationPath, "utf8"))
+        const pendingVerification = verifications.find(
+          (v) =>
+            v.telegram.toLowerCase() === msg.from.username.toLowerCase() &&
+            v.status === "pending" &&
+            new Date(v.expiresAt) > new Date(),
+        )
+
+        if (pendingVerification) {
+          bot.sendMessage(chatId, `Sizning tasdiqlash kodingiz: ${pendingVerification.code}`)
+
+          // Log the notification
+          const notifications = JSON.parse(fs.readFileSync(notificationsPath, "utf8"))
+          notifications.push({
+            id: uuidv4(),
+            userId: pendingVerification.userId,
+            telegram: msg.from.username,
+            message: `Verification code sent: ${pendingVerification.code}`,
+            chatId: chatId,
+            createdAt: new Date().toISOString(),
+          })
+          fs.writeFileSync(notificationsPath, JSON.stringify(notifications, null, 2))
+          console.log(`Verification code ${pendingVerification.code} sent to ${msg.from.username} via Telegram`)
+        }
+      } catch (err) {
+        console.error("Error handling telegram message:", err)
+      }
+    })
+  } catch (error) {
+    console.error("Error initializing Telegram bot:", error)
+    console.warn("Telegram bot functionality disabled due to error.")
+  }
 } else {
   console.warn("TELEGRAM_BOT_TOKEN not set. Bot functionality disabled.")
 }
 
 // Middleware
-// CORS sozlamalarini o'zgartirish
+// CORS sozlamalarini o'zgartirish - frontend uchun
 app.use(
   cors({
     origin: "*", // Barcha manzillardan so'rovlarni qabul qilish
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   }),
 )
 app.use(express.json())
-app.use(express.static(path.join(__dirname, "public")))
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -213,12 +247,21 @@ app.post("/api/auth/login", (req, res) => {
   })
 })
 
+// Update the send-code endpoint to fix verification code sending
 app.post("/api/auth/send-code", (req, res) => {
   console.log("Send code endpoint called with body:", req.body)
-  const { telegram } = req.body
+  const { telegram, name, phone } = req.body
 
   if (!telegram) {
     return res.status(400).json({ error: "Telegram username kiritilishi shart" })
+  }
+
+  if (!name) {
+    return res.status(400).json({ error: "To'liq ism kiritilishi shart" })
+  }
+
+  if (!phone) {
+    return res.status(400).json({ error: "Telefon raqam kiritilishi shart" })
   }
 
   // Generate a random 6-digit code
@@ -228,9 +271,15 @@ app.post("/api/auth/send-code", (req, res) => {
   // Store verification code with expiration
   const verifications = readDataFile("verifications.json")
 
+  // Remove @ symbol if present in the telegram username
+  let cleanTelegram = telegram
+  if (cleanTelegram.startsWith("@")) {
+    cleanTelegram = cleanTelegram.substring(1)
+  }
+
   // Expire any existing codes for this telegram username
   verifications.forEach((v) => {
-    if (v.telegram === telegram && v.status === "pending") {
+    if (v.telegram.toLowerCase() === cleanTelegram.toLowerCase() && v.status === "pending") {
       v.status = "expired"
     }
   })
@@ -239,7 +288,9 @@ app.post("/api/auth/send-code", (req, res) => {
   verifications.push({
     id: uuidv4(),
     userId,
-    telegram,
+    telegram: cleanTelegram,
+    name,
+    phone,
     code,
     status: "pending",
     createdAt: new Date().toISOString(),
@@ -248,15 +299,108 @@ app.post("/api/auth/send-code", (req, res) => {
 
   writeDataFile("verifications.json", verifications)
 
-  // Send verification code via Telegram bot
-  if (bot) {
-    // The bot will send the code when the user interacts with it
-    console.log(`Verification code ${code} ready for Telegram user ${telegram}`)
-  } else {
-    console.log(`Bot not available, but code ${code} generated for ${telegram}`)
+  // Make this endpoint just store the verification code but not attempt to send it
+  // The bot will send the code when the user interacts with it
+  console.log(`Generated verification code ${code} for Telegram user ${cleanTelegram}. 
+               User should receive it when interacting with the bot.`)
+
+  res.json({
+    message: "Tasdiqlash kodini olish uchun Telegram botga o'ting va /start buyrug'ini bosing",
+    userId,
+  })
+})
+
+// New endpoint for first step verification
+app.post("/api/auth/verify-code-step1", (req, res) => {
+  const { telegram, code, userId } = req.body
+
+  if (!telegram || !code || !userId) {
+    return res.status(400).json({ error: "Barcha ma'lumotlar kiritilishi shart" })
   }
 
-  res.json({ message: "Tasdiqlash kodi Telegram botga yuborildi", userId })
+  // Verify code
+  const verifications = readDataFile("verifications.json")
+  const verification = verifications.find(
+    (v) =>
+      v.telegram === telegram &&
+      v.code === code &&
+      v.status === "pending" &&
+      v.userId === userId &&
+      new Date(v.expiresAt) > new Date(),
+  )
+
+  if (!verification) {
+    return res.status(400).json({ error: "Noto'g'ri yoki muddati o'tgan tasdiqlash kodi" })
+  }
+
+  // Update verification status to step1-verified
+  verification.status = "step1-verified"
+  writeDataFile("verifications.json", verifications)
+
+  res.json({ message: "Kod tasdiqlandi. Endi tizimga kirish ma'lumotlarini yarating." })
+})
+
+// New endpoint for completing registration
+app.post("/api/auth/complete-registration", (req, res) => {
+  const { userId, username, password, name, phone, telegram } = req.body
+
+  if (!userId || !username || !password || !name || !phone || !telegram) {
+    return res.status(400).json({ error: "Barcha ma'lumotlar kiritilishi shart" })
+  }
+
+  // Check if username already exists
+  const users = readDataFile("users.json")
+  if (users.some((u) => u.username === username)) {
+    return res.status(400).json({ error: "Bu foydalanuvchi nomi allaqachon mavjud" })
+  }
+
+  // Find the verification record
+  const verifications = readDataFile("verifications.json")
+  const verification = verifications.find(
+    (v) => v.userId === userId && v.status === "step1-verified" && new Date(v.expiresAt) > new Date(),
+  )
+
+  if (!verification) {
+    return res.status(400).json({ error: "Yaroqsiz yoki muddati o'tgan ro'yxatdan o'tish jarayoni" })
+  }
+
+  // Create new user
+  const hashedPassword = bcrypt.hashSync(password, 10)
+  const newUser = {
+    id: userId,
+    username,
+    password: hashedPassword,
+    name,
+    phone,
+    role: "student",
+    telegram,
+    createdAt: new Date().toISOString(),
+  }
+
+  users.push(newUser)
+  writeDataFile("users.json", users)
+
+  // Update verification status
+  verification.status = "completed"
+  writeDataFile("verifications.json", verifications)
+
+  // Create token
+  const token = jwt.sign(
+    { id: newUser.id, username: newUser.username, role: newUser.role },
+    process.env.JWT_SECRET || "your-secret-key",
+    { expiresIn: "24h" },
+  )
+
+  res.json({
+    message: "Ro'yxatdan muvaffaqiyatli o'tdingiz",
+    token,
+    user: {
+      id: newUser.id,
+      username: newUser.username,
+      name: newUser.name,
+      role: newUser.role,
+    },
+  })
 })
 
 app.post("/api/auth/verify-code", (req, res) => {
@@ -628,13 +772,25 @@ app.get("/api/results/:id", authenticateToken, (req, res) => {
   res.json(formattedResult)
 })
 
-// Fallback route for SPA
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "login.html"))
+// Root endpoint to check if server is running
+app.get("/", (req, res) => {
+  res.json({
+    message: "Testing Platform API is running",
+    version: "1.0.0",
+    endpoints: [
+      "/api/test",
+      "/api/auth/login",
+      "/api/auth/send-code",
+      "/api/auth/verify-code",
+      "/api/users",
+      "/api/tests",
+      "/api/results",
+    ],
+  })
 })
 
 // Start the server
-const port = process.env.PORT || 3000
+const port = process.env.PORT || 10000
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`)
 })

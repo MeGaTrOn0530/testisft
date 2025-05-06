@@ -8,5 +8,15 @@
     "password": "$2b$10$ie/TIg9di2wF8OVYm.dYjuGBm2ciW2mqAmxxzMAL6jqezRBcbK5Ga",
     "role": "admin",
     "createdAt": "2025-05-06T13:40:45.768Z"
+  },
+  {
+    "id": "3e862c70-71cd-4402-a53b-ad599a92e968",
+    "username": "12",
+    "password": "$2a$10$GJwFp1rVzIEN2nnZ0PYPY.Qenaenu16It55gVop/2v8TNSl2niQ/O",
+    "name": "aaasssad",
+    "phone": "+998930030530",
+    "role": "student",
+    "telegram": "MeGaTrOn0530",
+    "createdAt": "2025-05-06T17:05:56.734Z"
   }
 ]
