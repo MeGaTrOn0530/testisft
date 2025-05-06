@@ -63,28 +63,29 @@ if (!users.some((user) => user.role === "admin")) {
 let bot
 if (process.env.TELEGRAM_BOT_TOKEN) {
   try {
-    // Check if we're in production to use webhooks, otherwise use polling for development
-    if (process.env.NODE_ENV === "production" && process.env.BASE_URL) {
-      // Use webhook in production to avoid polling conflicts
+    // For production (Render), use webhooks instead of polling
+    if (process.env.NODE_ENV === "production") {
       bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
         webHook: {
-          port: process.env.PORT || 3000,
+          port: process.env.PORT || 10000,
         },
       })
-      const webhookUrl = `${process.env.BASE_URL}/bot${process.env.TELEGRAM_BOT_TOKEN}`
+
+      // Set webhook URL based on your Render URL
+      const webhookUrl = `https://testisft.onrender.com/bot${process.env.TELEGRAM_BOT_TOKEN}`
       bot.setWebHook(webhookUrl)
-      console.log("Telegram bot initialized with webhook")
+      console.log("Telegram bot initialized with webhook mode for production")
     } else {
-      // Use polling in development with increased polling interval
+      // For development, use polling with a longer interval
       bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
         polling: {
-          interval: 2000,
+          interval: 3000,
           params: {
             timeout: 10,
           },
         },
       })
-      console.log("Telegram bot initialized with polling")
+      console.log("Telegram bot initialized with polling mode for development")
     }
 
     // Bot command handlers
