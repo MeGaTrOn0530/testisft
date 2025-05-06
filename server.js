@@ -7,7 +7,9 @@ const fs = require("fs")
 const jwt = require("jsonwebtoken")
 const bcrypt = require("bcryptjs")
 const { v4: uuidv4 } = require("uuid")
-const TelegramBot = require("node-telegram-bot-api")
+const multer = require("multer")
+const { parseTestFile, selectRandomQuestions } = require("./lib/testParser")
+const { initializeBot } = require("./bot")
 
 // Load environment variables
 require("dotenv").config()
@@ -62,85 +64,51 @@ if (!users.some((user) => user.role === "admin")) {
 // Initialize Telegram bot
 let bot
 if (process.env.TELEGRAM_BOT_TOKEN) {
-  try {
-    // For production (Render), use webhooks instead of polling
-    if (process.env.NODE_ENV === "production") {
-      bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
-        webHook: {
-          port: process.env.PORT || 10000,
-        },
-      })
-
-      // Set webhook URL based on your Render URL
-      const webhookUrl = `https://testisft.onrender.com/bot${process.env.TELEGRAM_BOT_TOKEN}`
-      bot.setWebHook(webhookUrl)
-      console.log("Telegram bot initialized with webhook mode for production")
-    } else {
-      // For development, use polling with a longer interval
-      bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
-        polling: {
-          interval: 3000,
-          params: {
-            timeout: 10,
-          },
-        },
-      })
-      console.log("Telegram bot initialized with polling mode for development")
-    }
-
-    // Bot command handlers
-    bot.onText(/\/start/, (msg) => {
-      const chatId = msg.chat.id
-      bot.sendMessage(
-        chatId,
-        "Salom! Testing platformasiga xush kelibsiz. Ro'yxatdan o'tish uchun platformada ma'lumotlaringizni kiriting.",
-      )
-    })
-
-    // Handle verification codes
-    bot.on("message", (msg) => {
-      if (!msg.from || !msg.from.username) return
-
-      const chatId = msg.chat.id
-      const verificationPath = path.join(dataDir, "verifications.json")
-      const notificationsPath = path.join(dataDir, "notifications.json")
-
-      try {
-        const verifications = JSON.parse(fs.readFileSync(verificationPath, "utf8"))
-        const pendingVerification = verifications.find(
-          (v) =>
-            v.telegram.toLowerCase() === msg.from.username.toLowerCase() &&
-            v.status === "pending" &&
-            new Date(v.expiresAt) > new Date(),
-        )
-
-        if (pendingVerification) {
-          bot.sendMessage(chatId, `Sizning tasdiqlash kodingiz: ${pendingVerification.code}`)
-
-          // Log the notification
-          const notifications = JSON.parse(fs.readFileSync(notificationsPath, "utf8"))
-          notifications.push({
-            id: uuidv4(),
-            userId: pendingVerification.userId,
-            telegram: msg.from.username,
-            message: `Verification code sent: ${pendingVerification.code}`,
-            chatId: chatId,
-            createdAt: new Date().toISOString(),
-          })
-          fs.writeFileSync(notificationsPath, JSON.stringify(notifications, null, 2))
-          console.log(`Verification code ${pendingVerification.code} sent to ${msg.from.username} via Telegram`)
-        }
-      } catch (err) {
-        console.error("Error handling telegram message:", err)
-      }
-    })
-  } catch (error) {
-    console.error("Error initializing Telegram bot:", error)
-    console.warn("Telegram bot functionality disabled due to error.")
-  }
+  // For production (Render), use webhooks, otherwise use polling
+  const mode = process.env.NODE_ENV === "production" ? "webhook" : "polling"
+  bot = initializeBot(process.env.TELEGRAM_BOT_TOKEN, mode)
 } else {
   console.warn("TELEGRAM_BOT_TOKEN not set. Bot functionality disabled.")
 }
+
+// Multer konfiguratsiyasini tekshirish
+// const multer = require("multer") // Removed redeclaration of multer
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    // Store uploaded files in the uploads directory
+    cb(null, path.join(__dirname, "uploads"))
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9)
+    cb(null, file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname))
+  },
+})
+
+// Create upload middleware
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    // Accept text files and images
+    if (file.fieldname === "testFile") {
+      if (file.mimetype === "text/plain") {
+        cb(null, true)
+      } else {
+        cb(new Error("Only text files are allowed for test import"))
+      }
+    } else if (file.fieldname === "image") {
+      if (file.mimetype.startsWith("image/")) {
+        cb(null, true)
+      } else {
+        cb(new Error("Only image files are allowed for question images"))
+      }
+    } else {
+      cb(null, false)
+    }
+  },
+})
 
 // Middleware
 // CORS sozlamalarini o'zgartirish - frontend uchun
@@ -153,6 +121,12 @@ app.use(
   }),
 )
 app.use(express.json())
+
+// Serve uploaded files
+app.use("/uploads", express.static(path.join(__dirname, "uploads")))
+
+// Serve static files from the public directory
+app.use(express.static(path.join(__dirname, "public")))
 
 // Authentication middleware
 const authenticateToken = (req, res, next) => {
@@ -404,72 +378,6 @@ app.post("/api/auth/complete-registration", (req, res) => {
   })
 })
 
-app.post("/api/auth/verify-code", (req, res) => {
-  const { telegram, code, name, password, userId } = req.body
-
-  if (!telegram || !code || !name || !password || !userId) {
-    return res.status(400).json({ error: "Barcha ma'lumotlar kiritilishi shart" })
-  }
-
-  // Verify code
-  const verifications = readDataFile("verifications.json")
-  const verification = verifications.find(
-    (v) =>
-      v.telegram === telegram &&
-      v.code === code &&
-      v.status === "pending" &&
-      v.userId === userId &&
-      new Date(v.expiresAt) > new Date(),
-  )
-
-  if (!verification) {
-    return res.status(400).json({ error: "Noto'g'ri yoki muddati o'tgan tasdiqlash kodi" })
-  }
-
-  // Check if username already exists
-  const users = readDataFile("users.json")
-  if (users.some((u) => u.username === telegram)) {
-    return res.status(400).json({ error: "Bu foydalanuvchi nomi allaqachon mavjud" })
-  }
-
-  // Create new user
-  const hashedPassword = bcrypt.hashSync(password, 10)
-  const newUser = {
-    id: userId,
-    username: telegram,
-    password: hashedPassword,
-    name,
-    role: "student",
-    telegram,
-    createdAt: new Date().toISOString(),
-  }
-
-  users.push(newUser)
-  writeDataFile("users.json", users)
-
-  // Update verification status
-  verification.status = "verified"
-  writeDataFile("verifications.json", verifications)
-
-  // Create token
-  const token = jwt.sign(
-    { id: newUser.id, username: newUser.username, role: newUser.role },
-    process.env.JWT_SECRET || "your-secret-key",
-    { expiresIn: "24h" },
-  )
-
-  res.json({
-    message: "Ro'yxatdan muvaffaqiyatli o'tdingiz",
-    token,
-    user: {
-      id: newUser.id,
-      username: newUser.username,
-      name: newUser.name,
-      role: newUser.role,
-    },
-  })
-})
-
 // User routes
 app.get("/api/users", authenticateToken, adminOnly, (req, res) => {
   const users = readDataFile("users.json").map((user) => ({
@@ -478,15 +386,125 @@ app.get("/api/users", authenticateToken, adminOnly, (req, res) => {
     name: user.name,
     role: user.role,
     telegram: user.telegram,
+    phone: user.phone || null,
     createdAt: user.createdAt,
   }))
 
   res.json(users)
 })
 
+// Endpoint to get all questions for random test creation
+app.get("/api/questions", authenticateToken, adminOnly, (req, res) => {
+  const tests = readDataFile("tests.json")
+
+  // Collect all questions from all tests
+  const allQuestions = []
+  tests.forEach((test) => {
+    test.questions.forEach((question) => {
+      allQuestions.push({
+        id: question.id,
+        text: question.text,
+        type: question.type,
+        options: question.options,
+        image: question.image,
+        correctAnswer: question.correctAnswer,
+      })
+    })
+  })
+
+  res.json(allQuestions)
+})
+
 // Test routes
+// Add this route to your server.js file, near the other test routes
+app.post("/api/tests/import", authenticateToken, adminOnly, upload.single("testFile"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Test file is required" })
+    }
+
+    // Read the uploaded file
+    const fileContent = fs.readFileSync(req.file.path, "utf8")
+
+    // Parse the file content
+    const questions = parseTestFile(fileContent)
+
+    if (questions.length === 0) {
+      return res.status(400).json({ error: "No valid questions found in the file" })
+    }
+
+    // Return the parsed questions
+    res.json({
+      message: `Successfully parsed ${questions.length} questions`,
+      questions: questions,
+    })
+  } catch (error) {
+    console.error("Error importing test:", error)
+    res.status(500).json({ error: "Failed to import test file" })
+  }
+})
+
+// Add this route to handle question image uploads
+app.post("/api/upload/image", authenticateToken, adminOnly, upload.single("image"), (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Image file is required" })
+    }
+
+    // Return the path to the uploaded image
+    const imagePath = `/uploads/${req.file.filename}`
+    res.json({
+      message: "Image uploaded successfully",
+      imagePath: imagePath,
+    })
+  } catch (error) {
+    console.error("Error uploading image:", error)
+    res.status(500).json({ error: "Failed to upload image" })
+  }
+})
+
+// Add this route to create a test with random questions
+app.post("/api/tests/random", authenticateToken, adminOnly, (req, res) => {
+  try {
+    const { title, description, duration, questionCount, allQuestions } = req.body
+
+    if (!title || !duration || !questionCount || !allQuestions || !Array.isArray(allQuestions)) {
+      return res.status(400).json({ error: "All required fields must be provided" })
+    }
+
+    // Select random questions
+    const selectedQuestions = selectRandomQuestions(allQuestions, questionCount)
+
+    // Create the test
+    const newTest = {
+      id: uuidv4(),
+      title,
+      description: description || "",
+      duration,
+      createdBy: req.user.id,
+      createdAt: new Date().toISOString(),
+      published: false,
+      backgroundImage: req.body.backgroundImage || null,
+      questions: selectedQuestions.map((q) => ({
+        id: uuidv4(),
+        ...q,
+      })),
+    }
+
+    const tests = readDataFile("tests.json")
+    tests.push(newTest)
+    writeDataFile("tests.json", tests)
+
+    res.status(201).json(newTest)
+  } catch (error) {
+    console.error("Error creating random test:", error)
+    res.status(500).json({ error: "Failed to create test" })
+  }
+})
+
+// Modify the existing test creation route to support background images
 app.post("/api/tests", authenticateToken, adminOnly, (req, res) => {
-  const { title, description, duration, questions } = req.body
+  const { title, description, duration, questions, backgroundImage } = req.body
 
   if (!title || !duration || !questions || !Array.isArray(questions) || questions.length === 0) {
     return res.status(400).json({ error: "Barcha ma'lumotlar to'g'ri formatda kiritilishi shart" })
@@ -500,6 +518,7 @@ app.post("/api/tests", authenticateToken, adminOnly, (req, res) => {
     createdBy: req.user.id,
     createdAt: new Date().toISOString(),
     published: false,
+    backgroundImage: backgroundImage || null,
     questions: questions.map((q) => ({
       id: uuidv4(),
       ...q,
@@ -566,6 +585,7 @@ app.get("/api/tests/:id", authenticateToken, (req, res) => {
         id: q.id,
         text: q.text,
         type: q.type,
+        image: q.image,
         options: q.options ? q.options.map((o) => ({ id: o.id, text: o.text })) : undefined,
       })),
     }
@@ -635,6 +655,7 @@ app.put("/api/tests/:id/publish", authenticateToken, adminOnly, (req, res) => {
 })
 
 // Results routes
+// Modify the results route to handle multiple correct answers
 app.post("/api/results", authenticateToken, (req, res) => {
   const { testId, answers } = req.body
   const userId = req.user.id
@@ -661,6 +682,21 @@ app.post("/api/results", authenticateToken, (req, res) => {
       if (question.type === "multiple-choice") {
         const correctOption = question.options.find((o) => o.correct)
         correct = answer.optionId === correctOption.id
+      } else if (question.type === "multiple-answer") {
+        // For multiple-answer questions, all correct options must be selected
+        // and no incorrect options should be selected
+        if (answer.selectedOptions && Array.isArray(answer.selectedOptions)) {
+          const correctOptions = question.options.filter((o) => o.correct).map((o) => o.id)
+          const incorrectOptions = question.options.filter((o) => !o.correct).map((o) => o.id)
+
+          // Check if all correct options are selected
+          const allCorrectSelected = correctOptions.every((id) => answer.selectedOptions.includes(id))
+
+          // Check if no incorrect options are selected
+          const noIncorrectSelected = !answer.selectedOptions.some((id) => incorrectOptions.includes(id))
+
+          correct = allCorrectSelected && noIncorrectSelected
+        }
       } else if (question.type === "text") {
         // Simple text comparison - could be improved with more sophisticated matching
         correct = answer.text.trim().toLowerCase() === question.correctAnswer.trim().toLowerCase()
@@ -773,21 +809,17 @@ app.get("/api/results/:id", authenticateToken, (req, res) => {
   res.json(formattedResult)
 })
 
-// Root endpoint to check if server is running
-app.get("/", (req, res) => {
-  res.json({
-    message: "Testing Platform API is running",
-    version: "1.0.0",
-    endpoints: [
-      "/api/test",
-      "/api/auth/login",
-      "/api/auth/send-code",
-      "/api/auth/verify-code",
-      "/api/users",
-      "/api/tests",
-      "/api/results",
-    ],
+// Handle Telegram webhook if in production mode
+if (process.env.NODE_ENV === "production" && bot) {
+  app.post(`/bot${process.env.TELEGRAM_BOT_TOKEN}`, (req, res) => {
+    bot.processUpdate(req.body)
+    res.sendStatus(200)
   })
+}
+
+// Serve index.html for all other routes
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "login.html"))
 })
 
 // Start the server

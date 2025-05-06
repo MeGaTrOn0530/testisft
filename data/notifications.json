@@ -5,7 +5,9 @@
     "telegram": "MeGaTrOn0530",
     "message": "Verification code sent: 743127",
     "chatId": 1077804816,
-    "createdAt": "2025-05-06T17:05:24.485Z"
+    "createdAt": "2025-05-06T17:05:24.485Z",
+    "sent": true,
+    "sentAt": "2025-05-06T19:08:43.237Z"
   },
   {
     "id": "973c849e-cde0-4083-b647-c900d0684e18",
@@ -13,6 +15,8 @@
     "telegram": "MeGaTrOn0530",
     "message": "Verification code sent: 478907",
     "chatId": 1077804816,
-    "createdAt": "2025-05-06T17:05:44.959Z"
+    "createdAt": "2025-05-06T17:05:44.959Z",
+    "sent": true,
+    "sentAt": "2025-05-06T19:08:43.237Z"
   }
 ]
